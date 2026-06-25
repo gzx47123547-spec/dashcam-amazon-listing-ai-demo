@@ -1,274 +1,240 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-
-type FormValues = {
-  product_name: string;
-  marketplace: string;
-  product_specs: string;
-  core_features: string;
-  target_audience: string;
-  core_keywords: string;
-  competitor_listing: string;
-  review_pain_points: string;
-  brand_tone: string;
-};
+import { useEffect, useRef, useState } from "react";
+import { ResultTabs } from "@/components/ResultTabs";
+import { UploadForm, type UploadFormValues } from "@/components/UploadForm";
+import { WorkflowProgress } from "@/components/WorkflowProgress";
+import type { GenerateResponse, GenerateSuccessResponse, WorkflowMode } from "@/types";
 
 type RunState = "idle" | "running" | "success" | "error";
 
-const defaultValues: FormValues = {
-  product_name: "4K 前后双录车载记录仪",
-  marketplace: "Amazon US / 美国站",
-  product_specs:
-    "前摄支持 4K 录制，后摄支持 1080P 录制，3 英寸 IPS 屏幕，前摄 170° 广角，后摄 140° 视角，支持循环录制、G-Sensor 碰撞锁定、夜视、停车监控，最大支持 256GB microSD 卡。内存卡不包含在包装内。停车监控可能需要额外降压线，降压线不包含。",
-  core_features:
-    "4K 高清前摄、1080P 后摄、前后双录、夜视、循环录制、G-Sensor 碰撞锁定、停车监控、3 英寸屏幕、广角录制、安装便捷。",
-  target_audience:
-    "日常通勤车主、新手司机、网约车司机、家庭用车用户、自驾出行用户。",
-  core_keywords:
-    "dash cam, 4K dash cam, front and rear dash cam, dash camera for cars, night vision dash cam, loop recording dash cam, G-sensor dash cam, parking monitor dash cam",
-  competitor_listing:
-    "Competitor Title: 4K Dash Cam Front and Rear, Dashboard Camera for Cars with Night Vision, Loop Recording, G-Sensor, Parking Monitor, 3 Inch Screen\n\nCompetitor Bullet Points:\n\n1. Records front and rear road conditions with clear video quality.\n2. Night vision helps capture driving footage in low-light environments.\n3. Loop recording automatically overwrites old unlocked files when the card is full.\n4. Built-in G-Sensor locks important footage when sudden impact is detected.\n5. Parking monitor helps record unexpected events when the vehicle is parked.",
-  review_pain_points:
-    "部分用户反馈夜间画面不够清晰，后摄像头布线比较麻烦，停车监控需要额外配件但页面说明不够清楚，内存卡不包含容易产生误解，安装说明不够直观。",
-  brand_tone: "专业、可靠、简洁、实用、有科技感。"
-};
-
-const fields: Array<{
-  key: keyof FormValues;
-  label: string;
-  type?: "input" | "textarea";
-  rows?: number;
-}> = [
-  { key: "product_name", label: "产品名称", type: "input" },
-  { key: "marketplace", label: "目标站点", type: "input" },
-  { key: "product_specs", label: "产品参数", rows: 5 },
-  { key: "core_features", label: "核心功能", rows: 4 },
-  { key: "target_audience", label: "目标用户", rows: 3 },
-  { key: "core_keywords", label: "核心关键词", rows: 4 },
-  { key: "competitor_listing", label: "竞品 Listing", rows: 8 },
-  { key: "review_pain_points", label: "用户评论痛点", rows: 4 },
-  { key: "brand_tone", label: "品牌语气", rows: 3 }
+const capabilityTags = ["课件结构化", "AI题目生成", "自动质检审核"];
+const productValues = [
+  "将非标准英语课件转化为结构化课程数据；",
+  "将人工出题流程转化为 AI 辅助生成流程；",
+  "将题目质量控制前置到自动质检节点；",
+  "可继续扩展为教师审核台、题库管理系统和学生学习报告系统。"
 ];
 
-function formatElapsed(ms: number | null) {
-  if (ms === null) {
-    return "--";
-  }
-
-  if (ms < 1000) {
-    return `${ms} ms`;
-  }
-
-  return `${(ms / 1000).toFixed(1)} s`;
-}
-
 export default function Home() {
-  const [formValues, setFormValues] = useState<FormValues>(defaultValues);
-  const [result, setResult] = useState("");
-  const [error, setError] = useState("");
+  const [apiMode, setApiMode] = useState<WorkflowMode>("mock");
+  const [forceMock, setForceMock] = useState(false);
   const [runState, setRunState] = useState<RunState>("idle");
-  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [activeStep, setActiveStep] = useState(0);
+  const [result, setResult] = useState<GenerateSuccessResponse | null>(null);
+  const [error, setError] = useState("");
+  const lastValuesRef = useRef<UploadFormValues | null>(null);
+  const timerRef = useRef<number | null>(null);
 
-  const statusLabel = useMemo(() => {
-    const labels: Record<RunState, string> = {
-      idle: "待运行",
-      running: "运行中",
-      success: "已完成",
-      error: "失败"
-    };
+  const currentMode: WorkflowMode = forceMock || apiMode === "mock" ? "mock" : "dify";
 
-    return labels[runState];
-  }, [runState]);
+  useEffect(() => {
+    let isMounted = true;
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setRunState("running");
-    setError("");
-    setCopied(false);
-    setElapsedMs(null);
-
-    const startedAt = performance.now();
-
-    try {
-      const response = await fetch("/api/dify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(formValues)
+    fetch("/api/generate")
+      .then((response) => response.json())
+      .then((payload: { mode?: WorkflowMode }) => {
+        if (isMounted && payload.mode) {
+          setApiMode(payload.mode);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setApiMode("mock");
+        }
       });
 
-      const payload = await response.json();
-      const clientElapsed = Math.round(performance.now() - startedAt);
-      setElapsedMs(
-        typeof payload.elapsedMs === "number" ? payload.elapsedMs : clientElapsed
-      );
+    return () => {
+      isMounted = false;
+      stopProgressTimer();
+    };
+  }, []);
 
-      if (!response.ok) {
-        const detail =
-          typeof payload.detail === "string"
-            ? payload.detail
-            : payload.detail
-              ? JSON.stringify(payload.detail, null, 2)
-              : "";
-        throw new Error(
-          [payload.error ?? "请求失败，请检查 Dify 配置。", detail]
-            .filter(Boolean)
-            .join("\n\n")
-        );
-      }
-
-      setResult(payload.result ?? JSON.stringify(payload, null, 2));
-      setRunState("success");
-    } catch (requestError) {
-      setRunState("error");
-      setResult("");
-      setElapsedMs(Math.round(performance.now() - startedAt));
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "调用 Dify Workflow API 时发生未知错误。"
-      );
-    }
-  }
-
-  async function handleCopy() {
-    if (!result) {
+  async function handleGenerate(values: UploadFormValues) {
+    if (!values.course_file) {
+      setError("请先上传英语课件");
       return;
     }
 
-    await navigator.clipboard.writeText(result);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    lastValuesRef.current = values;
+    setError("");
+    setRunState("running");
+    setResult(null);
+    startProgressTimer();
+
+    try {
+      const payload = await Promise.all([submitGenerateRequest(values), delay(2600)]).then(
+        ([response]) => response
+      );
+
+      if (!payload.success) {
+        throw new Error(payload.message);
+      }
+
+      stopProgressTimer();
+      setApiMode(payload.mode);
+      setActiveStep(5);
+      setResult(payload);
+      setRunState("success");
+    } catch (requestError) {
+      stopProgressTimer();
+      setRunState("error");
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "请求失败，请检查 Dify 配置或稍后重试。"
+      );
+    }
+  }
+
+  function handleRegenerate() {
+    if (lastValuesRef.current) {
+      void handleGenerate(lastValuesRef.current);
+    }
+  }
+
+  function handleClear() {
+    stopProgressTimer();
+    setResult(null);
+    setError("");
+    setRunState("idle");
+    setActiveStep(0);
+  }
+
+  function startProgressTimer() {
+    stopProgressTimer();
+    setActiveStep(0);
+    // 后端 blocking 返回时，前端仍模拟工作流节点推进，方便演示 Dify 执行过程。
+    timerRef.current = window.setInterval(() => {
+      setActiveStep((current) => (current < 4 ? current + 1 : current));
+    }, 620);
+  }
+
+  function stopProgressTimer() {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
   }
 
   return (
-    <main className="page-shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">DashCam Amazon Listing AI Workflow Demo</p>
-          <h1>车载记录仪 Amazon Listing AI 优化助手</h1>
-          <p className="subtitle">
-            输入产品参数、核心功能、关键词、竞品 Listing 和用户评论痛点，系统会调用 Dify 工作流，自动生成 Listing 初稿，并进行关键词覆盖和合规风险检查，最终输出一版可供运营参考的 Amazon Listing。
-          </p>
+    <main className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-4 py-6 lg:px-8">
+      <section className="card overflow-hidden">
+        <div className="grid gap-6 p-6 lg:grid-cols-[1fr_auto] lg:items-end lg:p-8">
+          <div>
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <ModeBadge mode={currentMode} />
+              {capabilityTags.map((tag) => (
+                <span
+                  className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
+                  key={tag}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+            <h1 className="max-w-5xl text-3xl font-black leading-tight text-slate-950 sm:text-4xl lg:text-5xl">
+              K12英语课件智能拆解与练习题生成审核系统
+            </h1>
+            <p className="mt-4 max-w-4xl text-base leading-8 text-slate-600">
+              面向英语教培机构的 AI 课件解析、题目生成与内容质检工作流 Demo
+            </p>
+            <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-500">
+              上传英语课件后，AI 自动完成课程结构解析、练习题生成和自动质检审核。
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 lg:w-72">
+            <p className="mb-1 font-black text-slate-900">演示链路</p>
+            <p className="leading-7">Upload → Parse → Generate → Audit → Review</p>
+          </div>
         </div>
-      </header>
+      </section>
 
-      <section className="workspace" aria-label="Listing workflow demo">
-        <form className="panel form-panel" onSubmit={handleSubmit}>
-          <div className="panel-heading">
-            <div>
-              <h2>产品输入</h2>
-              <p>已预填一组测试数据，可直接运行。</p>
+      <WorkflowProgress
+        activeIndex={activeStep}
+        hasResult={runState === "success"}
+        isFailed={runState === "error"}
+        isRunning={runState === "running"}
+      />
+
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      <section className="grid gap-5 lg:grid-cols-[minmax(340px,0.78fr)_minmax(0,1.22fr)]">
+        <UploadForm
+          forceMock={forceMock}
+          isLoading={runState === "running"}
+          onForceMockChange={setForceMock}
+          onGenerate={handleGenerate}
+        />
+        <ResultTabs
+          isLoading={runState === "running"}
+          result={result}
+          onClear={handleClear}
+          onRegenerate={handleRegenerate}
+        />
+      </section>
+
+      <section className="card p-5 lg:p-6">
+        <h2 className="panel-title">产品价值</h2>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {productValues.map((value, index) => (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4" key={value}>
+              <span className="mb-3 grid h-8 w-8 place-items-center rounded-full bg-blue-600 text-sm font-black text-white">
+                {index + 1}
+              </span>
+              <p className="text-sm leading-7 text-slate-700">{value}</p>
             </div>
-          </div>
-
-          <div className="field-grid">
-            {fields.map((field) => (
-              <label className="field" key={field.key}>
-                <span>{field.label}</span>
-                {field.type === "input" ? (
-                  <input
-                    value={formValues[field.key]}
-                    onChange={(event) =>
-                      setFormValues((current) => ({
-                        ...current,
-                        [field.key]: event.target.value
-                      }))
-                    }
-                  />
-                ) : (
-                  <textarea
-                    rows={field.rows}
-                    value={formValues[field.key]}
-                    onChange={(event) =>
-                      setFormValues((current) => ({
-                        ...current,
-                        [field.key]: event.target.value
-                      }))
-                    }
-                  />
-                )}
-              </label>
-            ))}
-          </div>
-
-          <div className="button-row">
-            <button
-              className="primary-button"
-              type="submit"
-              disabled={runState === "running"}
-            >
-              {runState === "running" ? "生成中..." : "生成 Listing"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFormValues(defaultValues);
-                setError("");
-              }}
-              disabled={runState === "running"}
-            >
-              恢复测试数据
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setResult("");
-                setError("");
-                setRunState("idle");
-                setElapsedMs(null);
-              }}
-              disabled={runState === "running"}
-            >
-              清空结果
-            </button>
-          </div>
-        </form>
-
-        <section className="panel result-panel">
-          <div className="result-toolbar">
-            <div className="status-group">
-              <span className={`status-dot ${runState}`} aria-hidden="true" />
-              <div>
-                <h2>输出结果</h2>
-                <p>
-                  运行状态：{statusLabel} · 运行耗时：{formatElapsed(elapsedMs)}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleCopy}
-              disabled={!result || runState === "running"}
-            >
-              {copied ? "已复制" : "复制结果"}
-            </button>
-          </div>
-
-          {error ? (
-            <div className="error-box" role="alert">
-              <strong>调用失败</strong>
-              <pre>{error}</pre>
-            </div>
-          ) : null}
-
-          <div className="markdown-body">
-            {runState === "running" ? (
-              <div className="empty-state">Dify 工作流正在运行，请稍候...</div>
-            ) : result ? (
-              <ReactMarkdown>{result}</ReactMarkdown>
-            ) : (
-              <div className="empty-state">
-                点击“生成 Listing”后，这里会展示 Dify 返回的 Markdown 结果。
-              </div>
-            )}
-          </div>
-        </section>
+          ))}
+        </div>
       </section>
     </main>
+  );
+}
+
+async function submitGenerateRequest(values: UploadFormValues): Promise<GenerateResponse> {
+  const formData = new FormData();
+  formData.append("grade", values.grade);
+  formData.append("course_type", values.course_type);
+  formData.append("question_type", values.question_type);
+  formData.append("difficulty", values.difficulty);
+  formData.append("question_count", String(values.question_count));
+  formData.append("mock", values.mock ? "true" : "false");
+
+  if (values.course_file) {
+    formData.append("course_file", values.course_file);
+  }
+
+  const response = await fetch("/api/generate", {
+    method: "POST",
+    body: formData
+  });
+  const payload = (await response.json()) as GenerateResponse;
+
+  if (!response.ok && payload.success === false) {
+    return payload;
+  }
+
+  return payload;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function ModeBadge({ mode }: { mode: WorkflowMode }) {
+  const isMock = mode === "mock";
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-black ${
+        isMock ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+      }`}
+    >
+      {isMock ? "当前为 Mock 演示模式" : "当前为真实 Dify 模式"}
+    </span>
   );
 }

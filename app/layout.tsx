@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "车载记录仪 Amazon Listing AI 优化助手",
-  description: "DashCam Amazon Listing AI Workflow Demo"
+  title: "K12英语课件智能拆解与练习题生成审核系统",
+  description: "面向英语教培机构的 AI 课件解析、题目生成与内容质检工作流 Demo"
 };
 
 export default function RootLayout({
